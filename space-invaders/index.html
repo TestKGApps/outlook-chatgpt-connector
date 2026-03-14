@@ -113,6 +113,113 @@ const scoreEl = document.getElementById('score-display');
 const livesEl = document.getElementById('lives-display');
 const waveEl = document.getElementById('wave-display');
 
+// ── Mario-style Sound Engine (Web Audio API) ──
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playTone(freq, duration, type, vol, slide) {
+  const ctx = ensureAudio();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type || 'square';
+  osc.frequency.setValueAtTime(freq, ctx.currentTime);
+  if (slide) osc.frequency.linearRampToValueAtTime(slide, ctx.currentTime + duration);
+  gain.gain.setValueAtTime(vol || 0.15, ctx.currentTime);
+  gain.gain.linearRampToValueAtTime(0, ctx.currentTime + duration);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(ctx.currentTime);
+  osc.stop(ctx.currentTime + duration);
+}
+
+function playNotes(notes, type, vol) {
+  const ctx = ensureAudio();
+  let t = ctx.currentTime;
+  notes.forEach(([freq, dur]) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type || 'square';
+    osc.frequency.setValueAtTime(freq, t);
+    gain.gain.setValueAtTime(vol || 0.12, t);
+    gain.gain.linearRampToValueAtTime(0, t + dur - 0.01);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + dur);
+    t += dur;
+  });
+}
+
+// Mario fireball sound — shoot
+function sndShoot() {
+  playTone(880, 0.07, 'square', 0.12);
+  setTimeout(() => playTone(1760, 0.06, 'square', 0.08), 30);
+}
+
+// Mario coin sound — enemy killed
+function sndCoin() {
+  playNotes([[988, 0.06], [1319, 0.15]], 'square', 0.15);
+}
+
+// Mario stomp/kick — shield hit
+function sndBlock() {
+  playTone(200, 0.08, 'square', 0.12, 120);
+}
+
+// Mario pipe/warp — enemy shoots
+function sndEnemyShoot() {
+  playTone(330, 0.1, 'triangle', 0.06, 110);
+}
+
+// Mario power-up — wave clear
+function sndPowerUp() {
+  playNotes([
+    [523, 0.08], [659, 0.08], [784, 0.08],
+    [1047, 0.08], [1319, 0.08], [1568, 0.12],
+    [1319, 0.15]
+  ], 'square', 0.13);
+}
+
+// Mario 1-UP — start game
+function sndOneUp() {
+  playNotes([
+    [330, 0.1], [392, 0.1], [523, 0.1],
+    [659, 0.1], [784, 0.1], [1047, 0.18]
+  ], 'square', 0.14);
+}
+
+// Mario damage/hit — player hit
+function sndPlayerHit() {
+  const ctx = ensureAudio();
+  let t = ctx.currentTime;
+  [440, 330, 220, 147].forEach((f, i) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(f, t);
+    gain.gain.setValueAtTime(0.15, t);
+    gain.gain.linearRampToValueAtTime(0, t + 0.1);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.1);
+    t += 0.1;
+  });
+}
+
+// Mario death jingle — game over
+function sndGameOver() {
+  playNotes([
+    [494, 0.2], [0.01, 0.05],
+    [392, 0.15], [330, 0.15], [262, 0.15],
+    [220, 0.15], [175, 0.15], [147, 0.4]
+  ], 'square', 0.15);
+}
+
 // Responsive canvas sizing
 function resize() {
   const w = window.innerWidth;
@@ -303,6 +410,7 @@ function update(g) {
   if (fireBtn() && g.shootCooldown <= 0) {
     g.bullets.push({ x: g.player.x + g.player.w / 2 - 2, y: g.player.y, w: 4, h: 12 });
     g.shootCooldown = 15;
+    sndShoot();
   }
 
   // Move bullets
@@ -337,6 +445,7 @@ function update(g) {
     const shooters = Object.values(columns);
     const shooter = shooters[Math.floor(Math.random() * shooters.length)];
     g.enemyBullets.push({ x: shooter.x - 2, y: shooter.y + shooter.h / 2, w: 4, h: 10 });
+    sndEnemyShoot();
   }
 
   // Bullet-enemy collision
@@ -347,6 +456,7 @@ function update(g) {
         b.y = -100;
         const pts = [10, 20, 40];
         g.score += pts[e.type];
+        sndCoin();
         spawnParticles(e.x, e.y, ['#ff4444', '#ff8800', '#ff00ff'][e.type], 12);
       }
     });
@@ -359,12 +469,14 @@ function update(g) {
       if (rectCollide(b, s.x, s.y, s.w, s.h)) {
         s.hp--;
         b.y = -100;
+        sndBlock();
       }
     });
     g.enemyBullets.forEach(b => {
       if (rectCollide(b, s.x, s.y, s.w, s.h)) {
         s.hp--;
         b.y = game.H + 100;
+        sndBlock();
       }
     });
   });
@@ -378,6 +490,9 @@ function update(g) {
       spawnParticles(g.player.x + g.player.w / 2, g.player.y + g.player.h / 2, '#0f0', 20);
       if (g.lives <= 0) {
         g.gameOver = true;
+        sndGameOver();
+      } else {
+        sndPlayerHit();
       }
     }
   });
@@ -385,6 +500,7 @@ function update(g) {
   // Enemy reaches player
   aliveEnemies.forEach(e => {
     if (e.y + e.h / 2 >= g.player.y) {
+      if (!g.gameOver) sndGameOver();
       g.gameOver = true;
     }
   });
@@ -410,6 +526,7 @@ function update(g) {
 
   // Wave clear
   if (aliveEnemies.length === 0) {
+    sndPowerUp();
     game = createGame(g.wave + 1);
   }
 
@@ -495,6 +612,8 @@ function loop() {
 }
 
 function startGame() {
+  ensureAudio();
+  sndOneUp();
   resize();
   overlay.classList.add('hidden');
   game = createGame(1);
